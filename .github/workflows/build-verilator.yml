@@ -98,7 +98,7 @@ jobs:
           sha256sum "$ARTIFACT" > "${ARTIFACT}.sha256"
           echo "Packaged: $ARTIFACT"
           echo "Contents:"
-          tar -tzf "$ARTIFACT" | head -30
+          tar -tzf "$ARTIFACT" | head -30 || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
