@@ -9,13 +9,11 @@
 #   version   Version tag (e.g., v5.022 or v7.0)
 #   platform  Target platform (default: auto-detected)
 #               linux-x86_64  — Linux x86_64
-#               macos-arm64   — macOS arm64 (Apple Silicon)
 #   dest      Installation prefix directory (default: /usr/local)
 #
 # Examples:
 #   ./scripts/download-tool.sh verilator v5.022
 #   ./scripts/download-tool.sh slang v7.0 linux-x86_64 /opt/hdl-tools
-#   ./scripts/download-tool.sh verilator v5.022 macos-arm64 $HOME/.local
 
 set -euo pipefail
 
@@ -33,7 +31,7 @@ if [[ -z "$TOOL" || -z "$VERSION" ]]; then
   echo "Usage: $0 <tool> <version> [platform] [dest]" >&2
   echo "  tool:     verilator | slang" >&2
   echo "  version:  e.g. v5.022 or v7.0" >&2
-  echo "  platform: linux-x86_64 | macos-arm64 (auto-detected if omitted)" >&2
+  echo "  platform: linux-x86_64 (auto-detected if omitted)" >&2
   echo "  dest:     installation prefix (default: /usr/local)" >&2
   exit 1
 fi
@@ -45,14 +43,9 @@ if [[ -z "$PLATFORM" ]]; then
   ARCH=$(uname -m)
   case "${OS}-${ARCH}" in
     Linux-x86_64)   PLATFORM="linux-x86_64" ;;
-    Darwin-arm64)   PLATFORM="macos-arm64"  ;;
-    Darwin-x86_64)
-      echo "Warning: macOS x86_64 binaries are not provided. Falling back to macos-arm64 via Rosetta." >&2
-      PLATFORM="macos-arm64"
-      ;;
     *)
       echo "Unsupported platform: ${OS}-${ARCH}" >&2
-      echo "Supported: linux-x86_64, macos-arm64" >&2
+      echo "Only linux-x86_64 binaries are provided." >&2
       exit 1
       ;;
   esac

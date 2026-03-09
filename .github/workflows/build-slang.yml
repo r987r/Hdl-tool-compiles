@@ -3,10 +3,6 @@ name: Build and Release Slang
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Slang version tag to build (e.g., v7.0)'
-        required: true
-        type: string
       force_rebuild:
         description: 'Rebuild and overwrite if release already exists'
         required: false
@@ -18,7 +14,29 @@ permissions:
   issues: write
 
 jobs:
+  detect-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.detect.outputs.version }}
+    steps:
+      - name: Detect latest upstream Slang release
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(curl -sf \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/MikePopoloski/slang/releases/latest" \
+            | jq -r '.tag_name // empty')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not determine latest Slang version"
+            exit 1
+          fi
+          echo "Detected latest Slang version: ${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
   check-existing:
+    needs: detect-version
     runs-on: ubuntu-latest
     outputs:
       should-build: ${{ steps.check.outputs.should-build }}
@@ -28,7 +46,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="slang-${{ inputs.version }}"
+          TAG="slang-${{ needs.detect-version.outputs.version }}"
           if gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
             if [ "${{ inputs.force_rebuild }}" = "true" ]; then
               echo "Release $TAG exists but force_rebuild=true — will rebuild."
@@ -43,32 +61,18 @@ jobs:
           fi
 
   build:
-    needs: check-existing
+    needs: [detect-version, check-existing]
     if: needs.check-existing.outputs.should-build == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            platform: linux-x86_64
-          - os: macos-14
-            platform: macos-arm64
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-22.04
     steps:
-      - name: Install build dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build g++ python3
 
-      - name: Install build dependencies (macOS)
-        if: runner.os == 'macOS'
+      - name: Clone Slang ${{ needs.detect-version.outputs.version }}
         run: |
-          brew install cmake ninja
-
-      - name: Clone Slang ${{ inputs.version }}
-        run: |
-          git clone --depth=1 --branch "${{ inputs.version }}" \
+          git clone --depth=1 --branch "${{ needs.detect-version.outputs.version }}" \
             https://github.com/MikePopoloski/slang slang-src
 
       - name: Configure Slang
@@ -91,13 +95,10 @@ jobs:
       - name: Package binary
         shell: bash
         run: |
-          ARTIFACT="slang-${{ inputs.version }}-${{ matrix.platform }}.tar.gz"
+          VERSION="${{ needs.detect-version.outputs.version }}"
+          ARTIFACT="slang-${VERSION}-linux-x86_64.tar.gz"
           tar -czf "$ARTIFACT" -C "$GITHUB_WORKSPACE/install" .
-          if command -v sha256sum &>/dev/null; then
-            sha256sum "$ARTIFACT" > "${ARTIFACT}.sha256"
-          else
-            shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
-          fi
+          sha256sum "$ARTIFACT" > "${ARTIFACT}.sha256"
           echo "Packaged: $ARTIFACT"
           echo "Contents:"
           tar -tzf "$ARTIFACT" | head -30
@@ -105,14 +106,14 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: slang-${{ matrix.platform }}
+          name: slang-linux-x86_64
           path: |
-            slang-${{ inputs.version }}-${{ matrix.platform }}.tar.gz
-            slang-${{ inputs.version }}-${{ matrix.platform }}.tar.gz.sha256
+            slang-${{ needs.detect-version.outputs.version }}-linux-x86_64.tar.gz
+            slang-${{ needs.detect-version.outputs.version }}-linux-x86_64.tar.gz.sha256
           retention-days: 1
 
   release:
-    needs: [check-existing, build]
+    needs: [detect-version, check-existing, build]
     if: needs.check-existing.outputs.should-build == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -133,7 +134,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete "slang-${{ inputs.version }}" \
+          gh release delete "slang-${{ needs.detect-version.outputs.version }}" \
             --repo "${{ github.repository }}" \
             --yes --cleanup-tag 2>/dev/null || true
 
@@ -142,7 +143,7 @@ jobs:
         run: |
           UPSTREAM=$(curl -sf \
             -H "Authorization: Bearer ${{ github.token }}" \
-            "https://api.github.com/repos/MikePopoloski/slang/releases/tags/${{ inputs.version }}" \
+            "https://api.github.com/repos/MikePopoloski/slang/releases/tags/${{ needs.detect-version.outputs.version }}" \
             || echo '{}')
           NOTES=$(echo "$UPSTREAM" | jq -r '.body // empty' 2>/dev/null || echo "")
           {
@@ -153,23 +154,24 @@ jobs:
 
       - name: Generate release notes
         run: |
-          VERSION="${{ inputs.version }}"
+          VERSION="${{ needs.detect-version.outputs.version }}"
           BUILD_DATE=$(date -u +"%Y-%m-%d")
           REPO="${{ github.repository }}"
 
           cat > release-notes.md << NOTESEOF
-          ## Slang ${VERSION}
+          ## Slang ${VERSION} (Latest)
 
-          Pre-compiled binaries for [Slang](https://github.com/MikePopoloski/slang) ${VERSION}.
+          Pre-compiled Linux x86_64 binary for [Slang](https://github.com/MikePopoloski/slang) ${VERSION}.
 
           Slang is a SystemVerilog language services library and toolset.
+
+          > This release was automatically built from the latest upstream release.
 
           ### Build Environment
 
           | Platform | OS | Architecture | Compiler |
           |----------|----|--------------|----------|
           | \`linux-x86_64\` | Ubuntu 22.04 LTS | x86_64 | GCC (system default) |
-          | \`macos-arm64\` | macOS 14 | arm64 (Apple Silicon) | Clang (Xcode) |
 
           ### Source
 
@@ -199,15 +201,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "slang-${{ inputs.version }}" \
+          VERSION="${{ needs.detect-version.outputs.version }}"
+          gh release create "slang-${VERSION}" \
             --repo "${{ github.repository }}" \
-            --title "Slang ${{ inputs.version }}" \
+            --title "Slang ${VERSION} (Latest)" \
             --notes-file release-notes.md \
+            --latest \
             release-artifacts/*
 
       - name: Update release documentation
         run: |
-          VERSION="${{ inputs.version }}"
+          VERSION="${{ needs.detect-version.outputs.version }}"
           BUILD_DATE=$(date -u +"%Y-%m-%d")
           REPO="${{ github.repository }}"
           BASE_URL="https://github.com/${REPO}/releases/download/slang-${VERSION}"
@@ -229,17 +233,15 @@ jobs:
           | Platform | Architecture | Binary | Checksum |
           |----------|--------------|--------|----------|
           | Linux | x86_64 | [slang-${VERSION}-linux-x86_64.tar.gz](${BASE_URL}/slang-${VERSION}-linux-x86_64.tar.gz) | [SHA256](${BASE_URL}/slang-${VERSION}-linux-x86_64.tar.gz.sha256) |
-          | macOS | arm64 | [slang-${VERSION}-macos-arm64.tar.gz](${BASE_URL}/slang-${VERSION}-macos-arm64.tar.gz) | [SHA256](${BASE_URL}/slang-${VERSION}-macos-arm64.tar.gz.sha256) |
 
           ## GitHub Actions Usage
 
           \`\`\`yaml
           steps:
-            - name: Install Slang ${VERSION}
+            - name: Install Slang (latest)
               run: |
                 VERSION="${VERSION}"
-                PLATFORM="linux-x86_64"  # or macos-arm64
-                curl -fsSL "https://github.com/${REPO}/releases/download/slang-\${VERSION}/slang-\${VERSION}-\${PLATFORM}.tar.gz" \\
+                curl -fsSL "https://github.com/${REPO}/releases/download/slang-\${VERSION}/slang-\${VERSION}-linux-x86_64.tar.gz" \\
                   -o slang.tar.gz
                 sudo tar -xzf slang.tar.gz -C /usr/local
                 echo "/usr/local/bin" >> \$GITHUB_PATH
@@ -248,10 +250,10 @@ jobs:
 
           HISTORY_FILE="docs/releases/slang-history.md"
           if [ ! -f "$HISTORY_FILE" ]; then
-            printf '# Slang Release History\n\n| Version | Date | Linux (x86_64) | macOS (arm64) |\n|---------|------|----------------|---------------|\n' > "$HISTORY_FILE"
+            printf '# Slang Release History\n\n| Version | Date | Linux (x86_64) |\n|---------|------|----------------|\n' > "$HISTORY_FILE"
           fi
 
-          NEW_ROW="| \`${VERSION}\` | ${BUILD_DATE} | [Download](${BASE_URL}/slang-${VERSION}-linux-x86_64.tar.gz) | [Download](${BASE_URL}/slang-${VERSION}-macos-arm64.tar.gz) |"
+          NEW_ROW="| \`${VERSION}\` | ${BUILD_DATE} | [Download](${BASE_URL}/slang-${VERSION}-linux-x86_64.tar.gz) |"
           if ! grep -qF "${VERSION}" "$HISTORY_FILE"; then
             echo "$NEW_ROW" >> "$HISTORY_FILE"
           fi
@@ -259,5 +261,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add docs/
-          git diff --staged --quiet || git commit -m "docs: update Slang release to ${VERSION} [skip ci]"
+          git diff --staged --quiet || git commit -m "docs: update Slang release to ${VERSION} (latest) [skip ci]"
           git push
