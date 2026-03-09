@@ -1,0 +1,266 @@
+name: Build and Release Verilator
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Verilator version tag to build (e.g., v5.022)'
+        required: true
+        type: string
+      force_rebuild:
+        description: 'Rebuild and overwrite if release already exists'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  check-existing:
+    runs-on: ubuntu-latest
+    outputs:
+      should-build: ${{ steps.check.outputs.should-build }}
+    steps:
+      - name: Check if release already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="verilator-${{ inputs.version }}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
+            if [ "${{ inputs.force_rebuild }}" = "true" ]; then
+              echo "Release $TAG exists but force_rebuild=true — will rebuild."
+              echo "should-build=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "Release $TAG already exists. Set force_rebuild=true to rebuild."
+              echo "should-build=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "Release $TAG does not exist — proceeding with build."
+            echo "should-build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check-existing
+    if: needs.check-existing.outputs.should-build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+          - os: macos-14
+            platform: macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            help2man perl python3 make autoconf g++ flex bison ccache \
+            libgoogle-perftools-dev numactl perl-doc libfl2 libfl-dev \
+            zlib1g zlib1g-dev
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install autoconf flex bison
+
+      - name: Clone Verilator ${{ inputs.version }}
+        run: |
+          git clone --depth=1 --branch "${{ inputs.version }}" \
+            https://github.com/verilator/verilator verilator-src
+
+      - name: Build Verilator (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd verilator-src
+          autoconf
+          ./configure --prefix="$GITHUB_WORKSPACE/install"
+          make -j$(nproc)
+          make install
+
+      - name: Build Verilator (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          export PATH="$(brew --prefix flex)/bin:$(brew --prefix bison)/bin:$PATH"
+          cd verilator-src
+          autoconf
+          ./configure --prefix="$GITHUB_WORKSPACE/install"
+          make -j$(sysctl -n hw.logicalcpu)
+          make install
+
+      - name: Package binary
+        shell: bash
+        run: |
+          ARTIFACT="verilator-${{ inputs.version }}-${{ matrix.platform }}.tar.gz"
+          tar -czf "$ARTIFACT" -C "$GITHUB_WORKSPACE/install" .
+          if command -v sha256sum &>/dev/null; then
+            sha256sum "$ARTIFACT" > "${ARTIFACT}.sha256"
+          else
+            shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
+          fi
+          echo "Packaged: $ARTIFACT"
+          echo "Contents:"
+          tar -tzf "$ARTIFACT" | head -30
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: verilator-${{ matrix.platform }}
+          path: |
+            verilator-${{ inputs.version }}-${{ matrix.platform }}.tar.gz
+            verilator-${{ inputs.version }}-${{ matrix.platform }}.tar.gz.sha256
+          retention-days: 1
+
+  release:
+    needs: [check-existing, build]
+    if: needs.check-existing.outputs.should-build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Delete existing release (force_rebuild)
+        if: inputs.force_rebuild
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "verilator-${{ inputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --yes --cleanup-tag 2>/dev/null || true
+
+      - name: Get upstream release notes
+        id: upstream
+        run: |
+          UPSTREAM=$(curl -sf \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/verilator/verilator/releases/tags/${{ inputs.version }}" \
+            || echo '{}')
+          NOTES=$(echo "$UPSTREAM" | jq -r '.body // empty' 2>/dev/null || echo "")
+          {
+            echo "notes<<UPSTREAM_EOF"
+            echo "${NOTES:-*No upstream release notes available.*}"
+            echo "UPSTREAM_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        run: |
+          VERSION="${{ inputs.version }}"
+          BUILD_DATE=$(date -u +"%Y-%m-%d")
+          REPO="${{ github.repository }}"
+
+          cat > release-notes.md << NOTESEOF
+          ## Verilator ${VERSION}
+
+          Pre-compiled binaries for [Verilator](https://github.com/verilator/verilator) ${VERSION}.
+
+          ### Build Environment
+
+          | Platform | OS | Architecture | Compiler |
+          |----------|----|--------------|----------|
+          | \`linux-x86_64\` | Ubuntu 22.04 LTS | x86_64 | GCC (system default) |
+          | \`macos-arm64\` | macOS 14 | arm64 (Apple Silicon) | Clang (Xcode) |
+
+          ### Source
+
+          - **Repository:** https://github.com/verilator/verilator
+          - **Tag:** \`${VERSION}\`
+          - **Build Date:** ${BUILD_DATE}
+
+          ### Upstream Release Notes
+
+          ${{ steps.upstream.outputs.notes }}
+
+          ### Usage in GitHub Actions
+
+          \`\`\`yaml
+          - name: Install Verilator ${VERSION}
+            run: |
+              curl -fsSL "https://github.com/${REPO}/releases/download/verilator-${VERSION}/verilator-${VERSION}-linux-x86_64.tar.gz" \\
+                -o verilator.tar.gz
+              sudo tar -xzf verilator.tar.gz -C /usr/local
+              echo "/usr/local/bin" >> \$GITHUB_PATH
+          \`\`\`
+
+          See the [repository README](https://github.com/${REPO}#readme) for full usage instructions.
+          NOTESEOF
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "verilator-${{ inputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --title "Verilator ${{ inputs.version }}" \
+            --notes-file release-notes.md \
+            release-artifacts/*
+
+      - name: Update release documentation
+        run: |
+          VERSION="${{ inputs.version }}"
+          BUILD_DATE=$(date -u +"%Y-%m-%d")
+          REPO="${{ github.repository }}"
+          BASE_URL="https://github.com/${REPO}/releases/download/verilator-${VERSION}"
+
+          mkdir -p docs/releases
+
+          cat > docs/releases/verilator-latest.md << DOCEOF
+          # Verilator — Latest Release
+
+          | Field | Value |
+          |-------|-------|
+          | **Version** | \`${VERSION}\` |
+          | **Release Date** | ${BUILD_DATE} |
+          | **Source** | [verilator/verilator @ ${VERSION}](https://github.com/verilator/verilator/tree/${VERSION}) |
+          | **Release Page** | [verilator-${VERSION}](https://github.com/${REPO}/releases/tag/verilator-${VERSION}) |
+
+          ## Downloads
+
+          | Platform | Architecture | Binary | Checksum |
+          |----------|--------------|--------|----------|
+          | Linux | x86_64 | [verilator-${VERSION}-linux-x86_64.tar.gz](${BASE_URL}/verilator-${VERSION}-linux-x86_64.tar.gz) | [SHA256](${BASE_URL}/verilator-${VERSION}-linux-x86_64.tar.gz.sha256) |
+          | macOS | arm64 | [verilator-${VERSION}-macos-arm64.tar.gz](${BASE_URL}/verilator-${VERSION}-macos-arm64.tar.gz) | [SHA256](${BASE_URL}/verilator-${VERSION}-macos-arm64.tar.gz.sha256) |
+
+          ## GitHub Actions Usage
+
+          \`\`\`yaml
+          steps:
+            - name: Install Verilator ${VERSION}
+              run: |
+                VERSION="${VERSION}"
+                PLATFORM="linux-x86_64"  # or macos-arm64
+                curl -fsSL "https://github.com/${REPO}/releases/download/verilator-\${VERSION}/verilator-\${VERSION}-\${PLATFORM}.tar.gz" \\
+                  -o verilator.tar.gz
+                sudo tar -xzf verilator.tar.gz -C /usr/local
+                echo "/usr/local/bin" >> \$GITHUB_PATH
+          \`\`\`
+          DOCEOF
+
+          HISTORY_FILE="docs/releases/verilator-history.md"
+          if [ ! -f "$HISTORY_FILE" ]; then
+            printf '# Verilator Release History\n\n| Version | Date | Linux (x86_64) | macOS (arm64) |\n|---------|------|----------------|---------------|\n' > "$HISTORY_FILE"
+          fi
+
+          NEW_ROW="| \`${VERSION}\` | ${BUILD_DATE} | [Download](${BASE_URL}/verilator-${VERSION}-linux-x86_64.tar.gz) | [Download](${BASE_URL}/verilator-${VERSION}-macos-arm64.tar.gz) |"
+          if ! grep -qF "${VERSION}" "$HISTORY_FILE"; then
+            echo "$NEW_ROW" >> "$HISTORY_FILE"
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/
+          git diff --staged --quiet || git commit -m "docs: update Verilator release to ${VERSION} [skip ci]"
+          git push

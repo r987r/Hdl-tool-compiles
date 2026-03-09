@@ -1,0 +1,181 @@
+name: Check Upstream Versions
+
+on:
+  schedule:
+    # Every Monday at 08:00 UTC
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get latest upstream versions
+        id: versions
+        run: |
+          # Verilator latest release
+          VERILATOR_LATEST=$(curl -sf \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/verilator/verilator/releases/latest" \
+            | jq -r '.tag_name // empty')
+
+          # Slang latest release
+          SLANG_LATEST=$(curl -sf \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/MikePopoloski/slang/releases/latest" \
+            | jq -r '.tag_name // empty')
+
+          echo "verilator-latest=${VERILATOR_LATEST}" >> "$GITHUB_OUTPUT"
+          echo "slang-latest=${SLANG_LATEST}"         >> "$GITHUB_OUTPUT"
+          echo "Verilator latest upstream: ${VERILATOR_LATEST}"
+          echo "Slang latest upstream:     ${SLANG_LATEST}"
+
+      - name: Check Verilator release status
+        id: verilator-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.versions.outputs.verilator-latest }}
+        run: |
+          if [ -z "$LATEST" ]; then
+            echo "Could not determine latest Verilator version. Skipping."
+            echo "needs-release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TAG="verilator-${LATEST}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
+            echo "Verilator ${LATEST} is already released."
+            echo "needs-release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Verilator ${LATEST} has NOT been released yet."
+            echo "needs-release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check Slang release status
+        id: slang-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.versions.outputs.slang-latest }}
+        run: |
+          if [ -z "$LATEST" ]; then
+            echo "Could not determine latest Slang version. Skipping."
+            echo "needs-release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TAG="slang-${LATEST}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
+            echo "Slang ${LATEST} is already released."
+            echo "needs-release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Slang ${LATEST} has NOT been released yet."
+            echo "needs-release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create issue for Verilator update
+        if: steps.verilator-check.outputs.needs-release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.versions.outputs.verilator-latest }}
+        run: |
+          TITLE="Release Verilator ${LATEST}"
+          # Only create if no open issue with this title exists
+          EXISTING=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --search "$TITLE" \
+            --json title --jq '.[0].title' 2>/dev/null || echo "")
+          if [ "$EXISTING" = "$TITLE" ]; then
+            echo "Issue already exists: $TITLE"
+          else
+            gh issue create \
+              --repo "${{ github.repository }}" \
+              --title "$TITLE" \
+              --body "$(cat << EOF
+          ## New Verilator Version Available
+
+          A new Verilator release has been published upstream: **${LATEST}**
+
+          - **Upstream release:** https://github.com/verilator/verilator/releases/tag/${LATEST}
+          - **Build workflow:** https://github.com/${{ github.repository }}/actions/workflows/build-verilator.yml
+
+          ### Action Required
+
+          Trigger the [Build and Release Verilator](https://github.com/${{ github.repository }}/actions/workflows/build-verilator.yml) workflow with version \`${LATEST}\` to publish compiled binaries.
+
+          ### Steps
+
+          1. Go to [Actions → Build and Release Verilator](https://github.com/${{ github.repository }}/actions/workflows/build-verilator.yml)
+          2. Click **Run workflow**
+          3. Enter version: \`${LATEST}\`
+          4. Click **Run workflow**
+
+          This issue will be resolved once the release \`verilator-${LATEST}\` is created.
+          EOF
+          )" \
+              --label "release-needed" 2>/dev/null || \
+            gh issue create \
+              --repo "${{ github.repository }}" \
+              --title "$TITLE" \
+              --body "New Verilator version ${LATEST} is available. Please trigger the Build and Release Verilator workflow with version ${LATEST}."
+            echo "Created issue: $TITLE"
+          fi
+
+      - name: Create issue for Slang update
+        if: steps.slang-check.outputs.needs-release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.versions.outputs.slang-latest }}
+        run: |
+          TITLE="Release Slang ${LATEST}"
+          EXISTING=$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --search "$TITLE" \
+            --json title --jq '.[0].title' 2>/dev/null || echo "")
+          if [ "$EXISTING" = "$TITLE" ]; then
+            echo "Issue already exists: $TITLE"
+          else
+            gh issue create \
+              --repo "${{ github.repository }}" \
+              --title "$TITLE" \
+              --body "$(cat << EOF
+          ## New Slang Version Available
+
+          A new Slang release has been published upstream: **${LATEST}**
+
+          - **Upstream release:** https://github.com/MikePopoloski/slang/releases/tag/${LATEST}
+          - **Build workflow:** https://github.com/${{ github.repository }}/actions/workflows/build-slang.yml
+
+          ### Action Required
+
+          Trigger the [Build and Release Slang](https://github.com/${{ github.repository }}/actions/workflows/build-slang.yml) workflow with version \`${LATEST}\` to publish compiled binaries.
+
+          ### Steps
+
+          1. Go to [Actions → Build and Release Slang](https://github.com/${{ github.repository }}/actions/workflows/build-slang.yml)
+          2. Click **Run workflow**
+          3. Enter version: \`${LATEST}\`
+          4. Click **Run workflow**
+
+          This issue will be resolved once the release \`slang-${LATEST}\` is created.
+          EOF
+          )" \
+              --label "release-needed" 2>/dev/null || \
+            gh issue create \
+              --repo "${{ github.repository }}" \
+              --title "$TITLE" \
+              --body "New Slang version ${LATEST} is available. Please trigger the Build and Release Slang workflow with version ${LATEST}."
+            echo "Created issue: $TITLE"
+          fi
+
+      - name: Summary
+        run: |
+          echo "## Version Check Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tool | Latest Upstream | Needs Release |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|----------------|---------------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Verilator | ${{ steps.versions.outputs.verilator-latest }} | ${{ steps.verilator-check.outputs.needs-release }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Slang | ${{ steps.versions.outputs.slang-latest }} | ${{ steps.slang-check.outputs.needs-release }} |" >> "$GITHUB_STEP_SUMMARY"
