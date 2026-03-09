@@ -61,8 +61,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             help2man perl python3 make autoconf g++ flex bison ccache \
-            libgoogle-perftools-dev numactl perl-doc libfl2 libfl-dev \
+            numactl perl-doc libfl2 libfl-dev \
             zlib1g zlib1g-dev
+          # libgoogle-perftools-dev conflicts with libunwind on Ubuntu 22.04;
+          # it is optional (used only for profiling), so allow the install to fail.
+          sudo apt-get install -y libgoogle-perftools-dev || true
 
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'

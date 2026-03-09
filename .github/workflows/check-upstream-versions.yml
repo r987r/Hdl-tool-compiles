@@ -17,11 +17,11 @@ jobs:
       - name: Get latest upstream versions
         id: versions
         run: |
-          # Verilator latest release
+          # Verilator uses tags only (no GitHub Releases); use the tags API
           VERILATOR_LATEST=$(curl -sf \
             -H "Authorization: Bearer ${{ github.token }}" \
-            "https://api.github.com/repos/verilator/verilator/releases/latest" \
-            | jq -r '.tag_name // empty')
+            "https://api.github.com/repos/verilator/verilator/tags?per_page=1" \
+            | jq -r '.[0].name // empty')
 
           # Slang latest release
           SLANG_LATEST=$(curl -sf \
