@@ -48,10 +48,10 @@ Or navigate to: **Actions → Check Upstream Versions → Run workflow**
 ### Via API
 
 ```bash
-# Check latest Verilator tag
+# Check latest Verilator tag (Verilator uses git tags, not GitHub Releases)
 curl -s https://api.github.com/repos/verilator/verilator/tags?per_page=1 | jq '.[0].name'
 
-# Check latest Slang release
+# Check latest Slang release (Slang uses GitHub Releases)
 curl -s https://api.github.com/repos/MikePopoloski/slang/releases/latest | jq '.tag_name'
 
 # Check if a version is already released here
