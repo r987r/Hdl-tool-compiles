@@ -103,14 +103,13 @@ jobs:
 
           ### Action Required
 
-          Trigger the [Build and Release Verilator](https://github.com/${{ github.repository }}/actions/workflows/build-verilator.yml) workflow with version \`${LATEST}\` to publish compiled binaries.
+          Trigger the [Build and Release Verilator](https://github.com/${{ github.repository }}/actions/workflows/build-verilator.yml) workflow to automatically detect and build the latest version (Linux x86_64 only).
 
           ### Steps
 
           1. Go to [Actions → Build and Release Verilator](https://github.com/${{ github.repository }}/actions/workflows/build-verilator.yml)
           2. Click **Run workflow**
-          3. Enter version: \`${LATEST}\`
-          4. Click **Run workflow**
+          3. Click **Run workflow** (the latest version is auto-detected)
 
           This issue will be resolved once the release \`verilator-${LATEST}\` is created.
           EOF
@@ -119,7 +118,7 @@ jobs:
             gh issue create \
               --repo "${{ github.repository }}" \
               --title "$TITLE" \
-              --body "New Verilator version ${LATEST} is available. Please trigger the Build and Release Verilator workflow with version ${LATEST}."
+              --body "New Verilator version ${LATEST} is available. Please trigger the Build and Release Verilator workflow to build it."
             echo "Created issue: $TITLE"
           fi
 
@@ -151,14 +150,13 @@ jobs:
 
           ### Action Required
 
-          Trigger the [Build and Release Slang](https://github.com/${{ github.repository }}/actions/workflows/build-slang.yml) workflow with version \`${LATEST}\` to publish compiled binaries.
+          Trigger the [Build and Release Slang](https://github.com/${{ github.repository }}/actions/workflows/build-slang.yml) workflow to automatically detect and build the latest version (Linux x86_64 only).
 
           ### Steps
 
           1. Go to [Actions → Build and Release Slang](https://github.com/${{ github.repository }}/actions/workflows/build-slang.yml)
           2. Click **Run workflow**
-          3. Enter version: \`${LATEST}\`
-          4. Click **Run workflow**
+          3. Click **Run workflow** (the latest version is auto-detected)
 
           This issue will be resolved once the release \`slang-${LATEST}\` is created.
           EOF
@@ -167,7 +165,7 @@ jobs:
             gh issue create \
               --repo "${{ github.repository }}" \
               --title "$TITLE" \
-              --body "New Slang version ${LATEST} is available. Please trigger the Build and Release Slang workflow with version ${LATEST}."
+              --body "New Slang version ${LATEST} is available. Please trigger the Build and Release Slang workflow to build it."
             echo "Created issue: $TITLE"
           fi
 

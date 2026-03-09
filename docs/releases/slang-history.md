@@ -1,6 +1,6 @@
 # Slang Release History
 
-> This file is automatically updated by the [Build and Release Slang](.github/workflows/build-slang.yml) workflow.
+> This file is automatically updated by the [Build and Release Slang](../../.github/workflows/build-slang.yml) workflow.
 
-| Version | Date | Linux (x86_64) | macOS (arm64) |
-|---------|------|----------------|---------------|
+| Version | Date | Linux (x86_64) |
+|---------|------|----------------|

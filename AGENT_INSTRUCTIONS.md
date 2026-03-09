@@ -7,16 +7,22 @@ the release process for this repository.
 
 ## Repository Purpose
 
-This repository provides **pre-compiled binaries** for HDL (Hardware Description Language)
-tools. Binaries are published as GitHub release artifacts and are **never deleted**, ensuring
+This repository provides **pre-compiled Linux x86_64 binaries** for HDL (Hardware
+Description Language) tools. Binaries are built from the **latest upstream releases**
+and published as GitHub release artifacts. Artifacts are **never deleted**, ensuring
 stable, permanent download URLs for dependent projects.
 
 ### Managed Tools
 
 | Tool | Source | Release Tag Format |
 |------|--------|-------------------|
-| Verilator | [verilator/verilator](https://github.com/verilator/verilator) | `verilator-v5.022` |
-| Slang | [MikePopoloski/slang](https://github.com/MikePopoloski/slang) | `slang-v7.0` |
+| Verilator | [verilator/verilator](https://github.com/verilator/verilator) | `verilator-<version>` (e.g. `verilator-v5.022`) |
+| Slang | [MikePopoloski/slang](https://github.com/MikePopoloski/slang) | `slang-<version>` (e.g. `slang-v7.0`) |
+
+### Platform
+
+Only **Linux x86_64** (Ubuntu 22.04 LTS) binaries are built. This is the platform
+used by GitHub Actions runners and Copilot agents.
 
 ---
 
@@ -42,10 +48,10 @@ Or navigate to: **Actions → Check Upstream Versions → Run workflow**
 ### Via API
 
 ```bash
-# Check latest Verilator release
-curl -s https://api.github.com/repos/verilator/verilator/releases/latest | jq '.tag_name'
+# Check latest Verilator tag (Verilator uses git tags, not GitHub Releases)
+curl -s https://api.github.com/repos/verilator/verilator/tags?per_page=1 | jq '.[0].name'
 
-# Check latest Slang release
+# Check latest Slang release (Slang uses GitHub Releases)
 curl -s https://api.github.com/repos/MikePopoloski/slang/releases/latest | jq '.tag_name'
 
 # Check if a version is already released here
@@ -56,24 +62,22 @@ gh release view "verilator-v5.022" --repo r987r/Hdl-tool-compiles
 
 ## Triggering a New Release
 
-### Step 1: Identify the Version
+The build workflows **automatically detect the latest upstream version** — no version
+input is required. Simply trigger the workflow and it will fetch, build, and release
+the latest version.
 
-Identify the upstream version tag to release (e.g., `v5.022` for Verilator, `v7.0` for Slang).
-
-### Step 2: Trigger the Build Workflow
+### Step 1: Trigger the Build Workflow
 
 #### Via GitHub CLI
 
 ```bash
-# Release Verilator
+# Release latest Verilator
 gh workflow run build-verilator.yml \
-  --repo r987r/Hdl-tool-compiles \
-  --field version=v5.022
+  --repo r987r/Hdl-tool-compiles
 
-# Release Slang
+# Release latest Slang
 gh workflow run build-slang.yml \
-  --repo r987r/Hdl-tool-compiles \
-  --field version=v7.0
+  --repo r987r/Hdl-tool-compiles
 ```
 
 #### Via GitHub UI
@@ -81,8 +85,7 @@ gh workflow run build-slang.yml \
 1. Go to [Actions](https://github.com/r987r/Hdl-tool-compiles/actions)
 2. Select **Build and Release Verilator** or **Build and Release Slang**
 3. Click **Run workflow**
-4. Enter the version tag
-5. Click **Run workflow**
+4. Click **Run workflow** (the latest version is auto-detected)
 
 #### Via GitHub REST API
 
@@ -91,10 +94,10 @@ curl -X POST \
   -H "Authorization: Bearer $GITHUB_TOKEN" \
   -H "Accept: application/vnd.github.v3+json" \
   "https://api.github.com/repos/r987r/Hdl-tool-compiles/actions/workflows/build-verilator.yml/dispatches" \
-  -d '{"ref":"main","inputs":{"version":"v5.022"}}'
+  -d '{"ref":"main"}'
 ```
 
-### Step 3: Monitor the Workflow
+### Step 2: Monitor the Workflow
 
 ```bash
 # List recent workflow runs
@@ -104,21 +107,19 @@ gh run list --repo r987r/Hdl-tool-compiles --workflow build-verilator.yml --limi
 gh run watch <run-id> --repo r987r/Hdl-tool-compiles
 ```
 
-### Step 4: Verify the Release
+### Step 3: Verify the Release
 
 ```bash
-# Check release was created
+# Check release was created (replace version with actual detected version)
 gh release view "verilator-v5.022" --repo r987r/Hdl-tool-compiles
 
 # List release assets
 gh release view "verilator-v5.022" --repo r987r/Hdl-tool-compiles --json assets --jq '.assets[].name'
 ```
 
-Expected assets:
+Expected assets (Linux x86_64 only):
 - `verilator-v5.022-linux-x86_64.tar.gz`
 - `verilator-v5.022-linux-x86_64.tar.gz.sha256`
-- `verilator-v5.022-macos-arm64.tar.gz`
-- `verilator-v5.022-macos-arm64.tar.gz.sha256`
 
 ---
 
@@ -129,11 +130,10 @@ If a release needs to be rebuilt (e.g., build was broken):
 ```bash
 gh workflow run build-verilator.yml \
   --repo r987r/Hdl-tool-compiles \
-  --field version=v5.022 \
   --field force_rebuild=true
 ```
 
-This will delete the existing release and rebuild from scratch.
+This will delete the existing release and rebuild the latest version from scratch.
 
 ---
 
@@ -156,8 +156,8 @@ gh issue close <issue-number> --repo r987r/Hdl-tool-compiles \
 
 | Tool | Upstream Tag | Release Tag | Release Title |
 |------|-------------|-------------|---------------|
-| Verilator | `v5.022` | `verilator-v5.022` | `Verilator v5.022` |
-| Slang | `v7.0` | `slang-v7.0` | `Slang v7.0` |
+| Verilator | `v5.022` | `verilator-v5.022` | `Verilator v5.022 (Latest)` |
+| Slang | `v7.0` | `slang-v7.0` | `Slang v7.0 (Latest)` |
 
 ---
 
@@ -179,7 +179,6 @@ These are committed back to the repository with `[skip ci]` to avoid triggering 
 | Platform Identifier | OS | Architecture |
 |---------------------|-----|--------------|
 | `linux-x86_64` | Ubuntu 22.04 LTS | x86_64 |
-| `macos-arm64` | macOS 14 | arm64 (Apple Silicon) |
 
 ---
 
@@ -189,7 +188,7 @@ These are committed back to the repository with `[skip ci]` to avoid triggering 
 
 Check the workflow logs in GitHub Actions. Common issues:
 - Upstream version tag does not exist → verify with `git ls-remote --tags https://github.com/verilator/verilator`
-- Build dependency changed → update the `apt-get install` or `brew install` step in the workflow
+- Build dependency changed → update the `apt-get install` step in the workflow
 
 ### Release not created
 
